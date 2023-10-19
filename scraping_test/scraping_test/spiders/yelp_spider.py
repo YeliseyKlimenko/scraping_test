@@ -118,7 +118,13 @@ class YelpSpider(scrapy.Spider):
                     'business_yelp_url': get_yelp_business_link(business),
                 }
 
-                yield scrapy.Request(url=get_yelp_business_link(business),
-                                     callback=self.parse_website,
-                                     meta={'business_data': business_data}
-                                     )
+                # yield scrapy.Request(url=get_yelp_business_link(business),
+                #                      callback=self.parse_website,
+                #                      meta={'business_data': business_data}
+                #                      )
+
+                yield {
+                    **business_data,
+                    'business_website_url': '',
+                    'reviews': []
+                }
