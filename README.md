@@ -10,7 +10,11 @@ This is a scrapy spider that scrapes the yelp website for business information a
 poetry shell
 poetry install
 ```
-3. Run the spider by running
+3. Navigate to the python package directory
+```
+cd scraping_test/scraping_test
+```
+4. Run the spider by running
 ```
 scrapy crawl yelp_spider -a category="<category>" -a location="<location>"
 ```
@@ -18,4 +22,4 @@ For example:
 ```
 scrapy crawl yelp_spider -a category="Contractors" -a location="Texas City, TX"
 ```
-4. The results will be saved in a json file in the results folder in project root directory.
+5. The results will be saved in a json file in the results folder in project root directory.
