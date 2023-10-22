@@ -1,6 +1,7 @@
 import scrapy
 import scrapy.cmdline
 import re
+import json
 from urllib.parse import urlparse, urlunparse, unquote, parse_qs, ParseResult
 from datetime import datetime
 
@@ -14,7 +15,6 @@ def get_yelp_business_link(element: Selector):
         if "/biz/" in link:
             url = link
             break
-    print(url)
 
     parsed_url = urlparse(url)
 
@@ -32,15 +32,25 @@ def get_yelp_business_link(element: Selector):
     return 'https://www.yelp.com' + cleaned_url
 
 
-def get_business_website_link(element: Selector) -> str:
-    if element and "biz_redir" in element.get():
-        decoded_url = unquote(element.get())
-        params = parse_qs(urlparse(decoded_url).query)
-        return params.get('url')[0]
+def get_business_website_link(url: str) -> str:
+    decoded_url = unquote(url)
+    params = parse_qs(urlparse(decoded_url).query)
+    return params.get('url')[0]
+
+
+def alt_yield(data):
+    with open(YelpSpider.alt_output_location, 'a') as f:
+        output = json.load(f)
+    if not isinstance(output, list):
+        output = []
+    output.append(data)
+    with open('your_data.json', 'w') as json_file:
+        json.dump(data, json_file, indent=4)
 
 
 class YelpSpider(scrapy.Spider):
     name = "yelp_spider"
+    alt_output_location = '../../results/alt_output.json'
 
     def __init__(self, *args, **kwargs):
         super(YelpSpider, self).__init__(*args, **kwargs)
@@ -56,7 +66,6 @@ class YelpSpider(scrapy.Spider):
         yield scrapy.Request(url, callback=self.parse)
 
     def parse_website(self, response):
-        print("Parsing website...")
         business_details_container = response.xpath(
             "//div[re:test(@class, 'biz-details-page-container-inner__[a-zA-Z0-9]{5}__[a-zA-Z0-9]{5}')]").xpath(
             ".//div[contains(@data-testid, 'sidebar-content')]")
@@ -66,65 +75,84 @@ class YelpSpider(scrapy.Spider):
             contacts = business_details_container[0].xpath(".//section/div/child::div")
             if contacts:
                 for contact in contacts:
-                    url = contact.xpath(".//a/@href")
-                    business_website_url = get_business_website_link(url)
-        #
-        # reviews_element = response.xpath("//div[contains(@id, 'reviews')]").xpath(
-        #     ".//ul[re:test(@class, 'undefined list__[a-zA-Z0-9]{5}__[a-zA-Z0-9]{5}')]/child::li")
-        #
-        # reviews = []
-        # for review in reviews_element:
-        #     while len(reviews) < 5:
-        #         review_attributes = review.xpath(
-        #             ".//div/child::div")
-        #
-        #         reviewer_name = review_attributes[0].xpath('string()').get().split('\n')[1]
-        #         review_location = review_attributes[0].xpath('string()').get().split('\n')[2]
-        #
-        #         date_format = "%b %d, %Y"
-        #
-        #         review_date = datetime.strptime(review_attributes[1].xpath('.//div/div[2]').get(), date_format)
-        #
-        #         reviews.append({
-        #             'reviewer_name': reviewer_name,
-        #             'review_location': review_location,
-        #             'review_date': review_date
-        #         })
-        #
+                    urls = contact.xpath(".//a/@href")
+                    if urls:
+                        for url in urls:
+                            if "biz_redir" in url.get():
+                                business_website_url = get_business_website_link(url.get())
+                                break
+                    if business_website_url:
+                        break
+
+        reviews_element = response.xpath("//div[contains(@id, 'reviews')]").xpath(
+            ".//ul[re:test(@class, 'undefined list__[a-zA-Z0-9]{5}__[a-zA-Z0-9]{5}')]/child::li")
+
         reviews = []
-        # business_website_url = ""
+        for review in reviews_element:
+            if len(reviews) < min(5, int(response.request.meta['business_data']['review_count'])):
+                review_attributes = review.xpath(".//child::*")
+
+                user_passport_info = review_attributes[0].xpath(
+                    ".//div[re:test(@class, 'user-passport-info')]/child::*")
+
+                reviewer_name = user_passport_info[0].xpath('string()').get()
+                review_location = user_passport_info[1].xpath('string()').get()
+
+                input_date_format = "%b %d, %Y"
+                output_date_format = "%Y-%m-%d"
+                pattern = r'\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s\d{1,2},\s\d{4}\b'
+
+                attr_text = [attr.xpath("string()").get() for attr in review_attributes]
+                matches = [re.findall(pattern, s) for s in attr_text]
+                matches = [match for match in matches if match]
+
+                review_date = datetime.strftime(datetime.strptime(matches[0][0],
+                                                                  input_date_format),
+                                                output_date_format)
+
+                reviews.append({
+                    'reviewer_name': reviewer_name,
+                    'review_location': review_location,
+                    'review_date': review_date
+                })
+
         data = response.request.meta['business_data']
-        print({**data,
-               'business_website_url': business_website_url,
-               'reviews': reviews})
-        yield {
-            **data,
-               'business_website_url': business_website_url,
-               'reviews': reviews
-                }
+        full_data = {**data,
+                     'business_website_url': business_website_url,
+                     'reviews': reviews}
+        alt_yield(full_data)
+        print(full_data)
+        yield full_data
 
     def parse(self, response):
         business_list = response.xpath(
             "//ul[re:test(@class, 'undefined list__[a-zA-Z0-9]{5}__[a-zA-Z0-9]{5}')]/child::li")
+        data_list = []
+        url_list = []
         for business in business_list:
             main_attributes = business.xpath(
                 ".//div[re:test(@class, 'mainAttributes__[a-zA-Z0-9]{5}__[a-zA-Z0-9]{5}')]/div/child::div")
 
             if main_attributes:
+                review_count = 0
+                try:
+                    review_count = int(
+                        re.findall(r'-?\d+', main_attributes[1].xpath('string()').get().split(' ')[1])[0])
+                except Exception:
+                    pass
+
                 business_data = {
                     'name': main_attributes[0].xpath('string()').get(),
                     'rating': main_attributes[1].xpath('string()').get().split(' ')[0],
-                    'review_count': re.findall(r'-?\d+', main_attributes[1].xpath('string()').get().split(' ')[1])[0],
+                    'review_count': review_count,
                     'business_yelp_url': get_yelp_business_link(business),
                 }
 
-                # yield scrapy.Request(url=get_yelp_business_link(business),
-                #                      callback=self.parse_website,
-                #                      meta={'business_data': business_data}
-                #                      )
+                data_list.append(business_data)
+                url_list.append(get_yelp_business_link(business))
 
-                yield {
-                    **business_data,
-                    'business_website_url': '',
-                    'reviews': []
-                }
+        for data, url in zip(data_list, url_list):
+            yield scrapy.Request(url=url,
+                                 callback=self.parse_website,
+                                 meta={'business_data': data}
+                                 )
