@@ -38,16 +38,6 @@ def get_business_website_link(url: str) -> str:
     return params.get('url')[0]
 
 
-def alt_yield(data):
-    with open(YelpSpider.alt_output_location, 'a') as f:
-        output = json.load(f)
-    if not isinstance(output, list):
-        output = []
-    output.append(data)
-    with open('your_data.json', 'w') as json_file:
-        json.dump(data, json_file, indent=4)
-
-
 class YelpSpider(scrapy.Spider):
     name = "yelp_spider"
     alt_output_location = '../../results/alt_output.json'
@@ -72,16 +62,11 @@ class YelpSpider(scrapy.Spider):
 
         business_website_url = ""
         if business_details_container:
-            contacts = business_details_container[0].xpath(".//section/div/child::div")
-            if contacts:
-                for contact in contacts:
-                    urls = contact.xpath(".//a/@href")
-                    if urls:
-                        for url in urls:
-                            if "biz_redir" in url.get():
-                                business_website_url = get_business_website_link(url.get())
-                                break
-                    if business_website_url:
+            urls = business_details_container[0].xpath(".//a/@href")
+            if urls:
+                for url in urls:
+                    if "biz_redir" in url.get():
+                        business_website_url = get_business_website_link(url.get())
                         break
 
         reviews_element = response.xpath("//div[contains(@id, 'reviews')]").xpath(
@@ -120,7 +105,6 @@ class YelpSpider(scrapy.Spider):
         full_data = {**data,
                      'business_website_url': business_website_url,
                      'reviews': reviews}
-        alt_yield(full_data)
         print(full_data)
         yield full_data
 
